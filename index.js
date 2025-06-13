@@ -1,6 +1,6 @@
 const express = require('express');
 const app = express();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 const port = process.env.PORT || 3000;
 require('dotenv').config();
@@ -29,14 +29,13 @@ async function run() {
     //indexing for search
     await blogsCollection.createIndex({ title: 'text' });
     await blogsCollection.createIndex({ category: 1 });
-   //get recent blog
+    //get recent blog
     app.get('/blogs', async (req, res) => {
-      const cursor = blogsCollection.find().sort({createdAt:-1}).limit(6);
+      const cursor = blogsCollection.find().sort({ createdAt: -1 }).limit(6);
       const result = await cursor.toArray();
       res.send(result);
     });
     //get all blogs
-
     app.get('/allBlogs', async (req, res) => {
       try {
         const { category, search } = req.query;
@@ -48,12 +47,28 @@ async function run() {
           query.$text = { $search: search };
         }
         const cursor = blogsCollection.find(query).sort({ createdAt: -1 });
-        const result=await cursor.toArray();
+        const result = await cursor.toArray();
         res.send(result);
-      }catch (err) {
+      } catch (err) {
         res.status(500).send({ error: 'Failed to fetch blogs' });
       }
-    })
+    });
+
+    //To get a single blog by its ID for the details page
+    app.get('/allBlogs/:id', async (req, res) => {
+         try{
+           const blogId = req.params.id;
+           const blog = await blogsCollection.findOne({ _id: new ObjectId(blogId) });
+           if (!blog) {
+             return res.status(404).send({ error: 'Blog not found' });
+           }
+           res.status(200).send(blog);
+         }catch(err){
+          res.status(500).send({ error: 'Failed to fetch blog details' });
+         }
+       })
+
+
     //get all categories
     app.get('/categories', async (req, res) => {
       try {
@@ -64,19 +79,83 @@ async function run() {
         console.error('Failed to fetch categories:', err);
         res.status(500).send({ error: 'Error fetching categories' });
       }
-    })
+    });
     // Create a new blog post
     app.post('/blogs', async (req, res) => {
       try {
         const newBlog = {
-          ...req.body, createdAt: new Date(),
-        }
-        const result= await blogsCollection.insertOne(newBlog);
+          ...req.body,
+          createdAt: new Date(),
+        };
+        const result = await blogsCollection.insertOne(newBlog);
         res.send(result);
       } catch (err) {
-        res.status(500).send({error: 'Failed to create blog post'});
-      }   
-    })
+        res.status(500).send({ error: 'Failed to create blog post' });
+      }
+    });
+    //  Add to wishlist
+    app.post('/wishList', async (req, res) => {
+      try {
+        const { blogId, userEmail } = req.body;
+        if (!blogId || !userEmail) {
+          return res
+            .status(400)
+            .send({ error: 'Blog ID or user email is required' });
+        }
+        const exist = await wishListCollection.findOne({
+          blogId: new ObjectId(blogId),
+          userEmail,
+        });
+        if (exist) {
+          return res.status(400).send({ error: 'Blog already in wishList' });
+        }
+        const wishListItem = {
+          blogId: new ObjectId(blogId),
+          userEmail,
+          addedAt: new Date(),
+        };
+        const result = await wishListCollection.insertOne(wishListItem);
+        res.status(201).send(result);
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to add to wishList' });
+      }
+    });
+
+    // Remove from wishlist
+    app.delete('/wishList/:id', async (req, res) => {
+      const blogId = req.params.id;
+      const email = req.query.email;
+      try {
+        const result = await wishListCollection.deleteOne({
+          blogId,
+          userEmail: email,
+        });
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ error: 'Blog not found in wishList' });
+        }
+        res
+          .status(200)
+          .send({ message: 'Blog removed from wishList successfully' });
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to remove from wishList' });
+      }
+    });
+    //get all wishListed blogs for a user
+    app.get('/wishList/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const wishList = await wishListCollection
+          .find({ userEmail: email })
+          .toArray();
+        const blogIds = wishList.map(item => item.blogId);
+        const blogs = await blogsCollection
+          .find({ _id: { $in: blogIds } })
+          .toArray();
+        res.status(200).send(blogs);
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to fetch wishList' });
+      }
+    });
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 });
     console.log(
