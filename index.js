@@ -186,6 +186,37 @@ async function run() {
         res.status(500).send({ error: 'Failed to fetch wishList' });
       }
     });
+
+    //update blog
+    app.patch('/allBlogs/:id', async (req, res) => {
+      try {
+        const blogId = req.params.id;
+        const userEmail= req.query.email;
+        const updatedBlog = req.body;
+
+        delete updatedBlog._id;
+        delete updatedBlog.createdAt;
+        delete updatedBlog.email;
+        
+        const blog = await blogsCollection.findOne({ _id: new ObjectId(blogId) });
+        if (!blog) {
+          return res.status(404).send({ error: 'Blog not found' });
+        }
+        if (blog.email !== userEmail) {
+          return res.status(403).send({ error: 'You are not authorized to update this blog' });
+        }
+
+        const result = await blogsCollection.updateOne({ _id: new ObjectId(blogId) }, { $set: updatedBlog });
+        if( result.matchedCount === 0) {
+          return res
+            .status(404)
+            .send({ error: 'Blog not found or no changes made' });
+        }
+        res.status(200).send({ message: 'Blog updated successfully', result });
+      }catch (err) {
+        res.status(500).send({ error: 'Failed to update blog' });
+      }
+    })
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 });
     console.log(
