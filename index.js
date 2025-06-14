@@ -55,6 +55,41 @@ async function run() {
       }
     });
 
+    //get top 10 featured blog by longDescription word count
+    app.get('/featuredBlogs', async (req, res) => {
+      try {
+        const blogs = await blogsCollection.aggregate([
+          {
+            $addFields: {
+              wordCount: {
+                $size: {
+                  $split: ['$longDescription', ' '],
+                },
+              },
+            },
+          },
+          {
+            $sort: { wordCount: -1 },
+          },
+          {
+            $limit: 10,
+          },
+          {
+            $project: {
+              title: 1,
+              category: 1,
+              name: 1,
+              createdAt: 1,
+              wordCount: 1,
+            },
+          },
+        ]).toArray();
+        res.status(200).send(blogs);
+      } catch (err) {
+        res.status(500).send({error:'failed to fetch featured blog'})
+      }
+    })
+
     //To get a single blog by its ID for the details page
     app.get('/allBlogs/:id', async (req, res) => {
          try{
@@ -197,7 +232,7 @@ async function run() {
         delete updatedBlog._id;
         delete updatedBlog.createdAt;
         delete updatedBlog.email;
-        
+
         const blog = await blogsCollection.findOne({ _id: new ObjectId(blogId) });
         if (!blog) {
           return res.status(404).send({ error: 'Blog not found' });
