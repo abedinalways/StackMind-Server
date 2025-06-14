@@ -8,8 +8,6 @@ require('dotenv').config();
 app.use(cors());
 app.use(express.json());
 
-
-
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.4oy8t6b.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -26,6 +24,7 @@ async function run() {
     await client.connect();
     const blogsCollection = client.db('StackMind').collection('blogs');
     const wishListCollection = client.db('StackMind').collection('wishList');
+    const commentsCollection= client.db('StackMind').collection('comments');
     //indexing for search
     await blogsCollection.createIndex({ title: 'text' });
     await blogsCollection.createIndex({ category: 1 });
@@ -35,6 +34,8 @@ async function run() {
       const result = await cursor.toArray();
       res.send(result);
     });
+
+
     //get all blogs
     app.get('/allBlogs', async (req, res) => {
       try {
@@ -67,8 +68,37 @@ async function run() {
           res.status(500).send({ error: 'Failed to fetch blog details' });
          }
        })
-
-
+    //get comments for a blog Id
+    app.get('/comments', async (req, res) => {
+      try {
+        const blogId = req.query.blogId;
+        if (!blogId) {
+          return res.status(400).send({ error: 'Blog ID is required' });
+        }
+        const result = await commentsCollection
+          .find({ blogId})
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.status(200).send(result);
+      } catch(err) {
+        res.status(500).send({ error: 'Failed to fetch comments' });
+      }
+    })
+    // Add a comment to a blog post
+    app.post('/comments', async (req, res) => {
+      const comment = req.body;
+      if (!comment.blogId || !comment.userEmail || !comment.text) {
+        return res.status(400).send({ error: 'All fields are required' });
+      }
+      comment.createdAt = new Date();
+      try {
+        const result = await commentsCollection.insertOne(comment);
+        res.status(201).send(result);
+        
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to add comment' });
+      }
+    });
     //get all categories
     app.get('/categories', async (req, res) => {
       try {
