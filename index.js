@@ -25,6 +25,7 @@ async function run() {
     const blogsCollection = client.db('StackMind').collection('blogs');
     const wishListCollection = client.db('StackMind').collection('wishList');
     const commentsCollection= client.db('StackMind').collection('comments');
+    const starCollection = client.db('StackMind').collection('StarPerson');
     //indexing for search
     await blogsCollection.createIndex({ title: 'text' });
     await blogsCollection.createIndex({ category: 1 });
@@ -251,6 +252,17 @@ async function run() {
         res.status(500).send({ error: 'Failed to fetch wishList' });
       }
     });
+    //to get Star of the week
+    app.get('/api/starPerson', async (req, res) => {
+      try {
+        const result = await starCollection.aggregate([{ $sample: { size: 1 } }]).toArray();
+        res.send(result[0]);
+      } catch (err) {
+        res.status(500).send({
+          error:'failed to fetch the person'
+        })
+      }
+    })
     
     //update blog
     app.patch('/allBlogs/:id', async (req, res) => {
