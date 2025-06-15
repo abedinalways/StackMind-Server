@@ -168,7 +168,7 @@ async function run() {
             .send({ error: 'Blog ID or user email is required' });
         }
         const exist = await wishListCollection.findOne({
-          blogId: new ObjectId(blogId),
+          blogId,
           userEmail,
         });
         if (exist) {
@@ -192,7 +192,7 @@ async function run() {
       const email = req.query.email;
       try {
         const result = await wishListCollection.deleteOne({
-          blogId,
+          blogId : new ObjectId(blogId),
           userEmail: email,
         });
         if (result.deletedCount === 0) {
@@ -212,16 +212,46 @@ async function run() {
         const wishList = await wishListCollection
           .find({ userEmail: email })
           .toArray();
-        const blogIds = wishList.map(item => item.blogId);
+        const blogIds = wishList.map(item =>
+  typeof item.blogId === 'string' ? new ObjectId(item.blogId) : item.blogId
+);
         const blogs = await blogsCollection
-          .find({ _id: { $in: blogIds } })
+          .aggregate([
+            {
+              $match: {
+                _id: { $in: blogIds },
+                longDescription: { $exists: true, $type: 'string' },
+              },
+            },
+            {
+              $addFields: {
+                wordCount: {
+                  $size: {
+                    $split: ['$longDescription', ' '],
+                  },
+                },
+              },
+            },
+            {
+              $sort: { createdAt: -1 },
+            },
+            {
+              $project: {
+                title: 1,
+                category: 1,
+                name: 1,
+                createdAt: 1,
+                wordCount: 1,
+              },
+            },
+          ])
           .toArray();
         res.status(200).send(blogs);
       } catch (err) {
         res.status(500).send({ error: 'Failed to fetch wishList' });
       }
     });
-
+    
     //update blog
     app.patch('/allBlogs/:id', async (req, res) => {
       try {
