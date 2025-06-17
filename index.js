@@ -6,16 +6,8 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const cors = require('cors');
 const port = process.env.PORT || 3000;
 require('dotenv').config();
-//middleware
-app.use(
-  cors({
-    origin: ['http://localhost:5173/'],
-    credentials:true
-  })
-);
-app.use(express.json());
-app.use(cookieParser());
-app.use(logger());
+
+
 //logger middleware
 const logger = (req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -36,6 +28,19 @@ const verifyToken = (req, res, next) => {
     return res.status(401).send({ error: 'Invalid or expired token' });
   }
 };
+
+//middleware
+app.use(
+  cors({
+    origin: ['http://localhost:5173'],
+    credentials:true
+  })
+);
+app.use(express.json());
+app.use(cookieParser());
+app.use(logger);
+
+
 
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.4oy8t6b.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -82,7 +87,7 @@ async function run() {
     app.post('/logout', (req, res) => {
       res.clearCookie('token', {
         httpOnly: true,
-        secure: false, // Set to true in production with HTTPS
+        secure: false, 
       });
       res.send({ message: 'Logged out successfully' });
     });
@@ -273,30 +278,45 @@ async function run() {
     app.get('/wishList/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
-        if (email != req.user.email) {
-          return res.status(403).send({ error: 'Unauthorized to access wishlist' });
+        console.log('Fetching wishlist for email:', email);
+        if (email !== req.user.email) {
+          console.log('Unauthorized access attempt:', {
+            requestedEmail: email,
+            userEmail: req.user.email,
+          });
+          return res
+            .status(403)
+            .send({ error: 'Unauthorized to access wishlist' });
         }
         const wishList = await wishListCollection
           .find({ userEmail: email })
           .toArray();
-        const blogIds = wishList.map(item =>
-          typeof item.blogId === 'string'
-            ? new ObjectId(item.blogId)
-            : item.blogId
-        );
+        console.log('Wishlist items:', wishList);
+        if (wishList.length === 0) {
+          console.log('No wishlist items found for email:', email);
+          return res.status(200).send([]);
+        }
+        const blogIds = wishList.map(item => {
+          const blogId =
+            typeof item.blogId === 'string'
+              ? new ObjectId(item.blogId)
+              : item.blogId;
+          console.log('Processing blogId:', blogId); 
+          return blogId;
+        });
+        console.log('Blog IDs for aggregation:', blogIds);
         const blogs = await blogsCollection
           .aggregate([
             {
               $match: {
                 _id: { $in: blogIds },
-                longDescription: { $exists: true, $type: 'string' },
               },
             },
             {
               $addFields: {
                 wordCount: {
                   $size: {
-                    $split: ['$longDescription', ' '],
+                    $split: [{ $ifNull: ['$longDescription', ''] }, ' '],
                   },
                 },
               },
@@ -306,6 +326,7 @@ async function run() {
             },
             {
               $project: {
+                _id: 1,
                 title: 1,
                 category: 1,
                 name: 1,
@@ -315,9 +336,11 @@ async function run() {
             },
           ])
           .toArray();
+        console.log('Aggregated blogs:', blogs); 
         res.status(200).send(blogs);
       } catch (err) {
-        res.status(500).send({ error: 'Failed to fetch wishList' });
+        console.error('Error fetching wishlist:', err);
+        res.status(500).send({ error: 'Failed to fetch wishlist' });
       }
     });
     //to get Star of the week
