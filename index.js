@@ -7,45 +7,52 @@ const cors = require('cors');
 const port = process.env.PORT || 3000;
 require('dotenv').config();
 
+// Environment variable validation
+const requiredEnvVars = ['DB_USER', 'DB_PASS', 'JWT_ACCESS_TOKEN'];
+requiredEnvVars.forEach(varName => {
+  if (!process.env[varName]) {
+    throw new Error(`Environment variable ${varName} is missing`);
+  }
+});
+if (process.env.JWT_ACCESS_TOKEN.length < 32) {
+  throw new Error('JWT_ACCESS_TOKEN must be at least 32 characters long');
+}
 
-//logger middleware
+// Logger middleware
 const logger = (req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
-}
+};
 
 // JWT verification middleware
 const verifyToken = (req, res, next) => {
-  const token = req.cookies.token; 
-  if (!token) {
-    return res.status(401).send({ error: 'No token provided, authorization denied' });
-  }
+  const token = req.cookies.token;
+  if (!token)
+    return res
+      .status(401)
+      .send({ error: 'No token provided, authorization denied' });
   try {
     const decoded = jwt.verify(token, process.env.JWT_ACCESS_TOKEN);
-    req.user = decoded; 
+    req.user = decoded;
     next();
   } catch (err) {
     return res.status(401).send({ error: 'Invalid or expired token' });
   }
 };
 
-//middleware
+// Middleware
 app.use(
   cors({
-    origin: ['http://localhost:5173'],
-    credentials:true
+    origin: ['http://localhost:5173', 'https://stackmind-auth.web.app'],
+    credentials: true,
   })
 );
 app.use(express.json());
 app.use(cookieParser());
 app.use(logger);
 
-
-
-
+// MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.4oy8t6b.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -57,88 +64,80 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     await client.connect();
-    const blogsCollection = client.db('StackMind').collection('blogs');
-    const wishListCollection = client.db('StackMind').collection('wishList');
-    const commentsCollection = client.db('StackMind').collection('comments');
-    const starCollection = client.db('StackMind').collection('StarPerson');
-    //indexing for search
+    const db = client.db('StackMind');
+    const blogsCollection = db.collection('blogs');
+    const wishListCollection = db.collection('wishList');
+    const commentsCollection = db.collection('comments');
+    const starCollection = db.collection('StarPerson');
+
     await blogsCollection.createIndex({ title: 'text' });
     await blogsCollection.createIndex({ category: 1 });
 
-    //jwt token related API
+    // Auth endpoints
     app.post('/jwt', async (req, res) => {
       const user = { email: req.body.email };
-
-      //token creation
       const token = jwt.sign(user, process.env.JWT_ACCESS_TOKEN, {
         expiresIn: '7d',
       });
-
-      //set token in the cookie
       res
         .cookie('token', token, {
           httpOnly: true,
-          secure: false,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'None',
         })
         .send({ message: 'jwt created successfully' });
     });
 
-    // Logout 
     app.post('/logout', (req, res) => {
       res.clearCookie('token', {
         httpOnly: true,
-        secure: false, 
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'None',
       });
       res.send({ message: 'Logged out successfully' });
     });
 
-    //
-    //get recent blog
+    // Blog endpoints
     app.get('/blogs', async (req, res) => {
-      const cursor = blogsCollection.find().sort({ createdAt: -1 }).limit(6);
-      const result = await cursor.toArray();
-      res.send(result);
+      try {
+        const result = await blogsCollection
+          .find()
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .toArray();
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to fetch recent blogs' });
+      }
     });
 
-    //get all blogs
-    app.get('/allBlogs',  async (req, res) => {
+    app.get('/allBlogs', async (req, res) => {
       try {
         const { category, search } = req.query;
         let query = {};
-        if (category) {
-          query.category = category;
-        }
-        if (search) {
-          query.$text = { $search: search };
-        }
-        const cursor = blogsCollection.find(query).sort({ createdAt: -1 });
-        const result = await cursor.toArray();
+        if (category) query.category = category;
+        if (search) query.$text = { $search: search };
+        const result = await blogsCollection
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
         res.send(result);
       } catch (err) {
         res.status(500).send({ error: 'Failed to fetch blogs' });
       }
     });
 
-    //get top 10 featured blog by longDescription word count
     app.get('/featuredBlogs', async (req, res) => {
       try {
         const blogs = await blogsCollection
           .aggregate([
             {
               $addFields: {
-                wordCount: {
-                  $size: {
-                    $split: ['$longDescription', ' '],
-                  },
-                },
+                wordCount: { $size: { $split: ['$longDescription', ' '] } },
               },
             },
-            {
-              $sort: { wordCount: -1 },
-            },
-            {
-              $limit: 10,
-            },
+            { $sort: { wordCount: -1 } },
+            { $limit: 10 },
             {
               $project: {
                 title: 1,
@@ -150,84 +149,77 @@ async function run() {
             },
           ])
           .toArray();
-        res.status(200).send(blogs);
+        res.send(blogs);
       } catch (err) {
-        res.status(500).send({ error: 'failed to fetch featured blog' });
+        res.status(500).send({ error: 'Failed to fetch featured blogs' });
       }
     });
 
-
-    //To get a single blog by its ID for the details page
     app.get('/allBlogs/:id', async (req, res) => {
       try {
         const blogId = req.params.id;
+        if (!ObjectId.isValid(blogId)) {
+          return res.status(400).send({ error: 'Invalid blog ID' });
+        }
         const blog = await blogsCollection.findOne({
           _id: new ObjectId(blogId),
         });
-        if (!blog) {
-          return res.status(404).send({ error: 'Blog not found' });
-        }
-        res.status(200).send(blog);
+        if (!blog) return res.status(404).send({ error: 'Blog not found' });
+        res.send(blog);
       } catch (err) {
         res.status(500).send({ error: 'Failed to fetch blog details' });
       }
     });
-    
-    //get comments for a blog Id
-    app.get('/comments', async (req, res) => {
-      try {
-        const blogId = req.query.blogId;
-        if (!blogId) {
-          return res.status(400).send({ error: 'Blog ID is required' });
-        }
-        const result = await commentsCollection
-          .find({ blogId })
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.status(200).send(result);
-      } catch (err) {
-        res.status(500).send({ error: 'Failed to fetch comments' });
-      }
-    });
-    // Add a comment to a blog post
-    app.post('/comments', verifyToken, async (req, res) => {
-      const comment = req.body;
-      if (!comment.blogId || !comment.userEmail || !comment.text) {
-        return res.status(400).send({ error: 'All fields are required' });
-      }
-      comment.createdAt = new Date();
-      try {
-        const result = await commentsCollection.insertOne(comment);
-        res.status(201).send(result);
-      } catch (err) {
-        res.status(500).send({ error: 'Failed to add comment' });
-      }
-    });
-    //get all categories
-    app.get('/categories', async (req, res) => {
-      try {
-        const categories = await blogsCollection.distinct('category');
-        categories.sort();
-        res.status(200).send(categories);
-      } catch (err) {
-        console.error('Failed to fetch categories:', err);
-        res.status(500).send({ error: 'Error fetching categories' });
-      }
-    });
-    // Create a new blog post
+
     app.post('/blogs', verifyToken, async (req, res) => {
       try {
         const newBlog = {
           ...req.body,
+          email: req.user.email,
           createdAt: new Date(),
         };
         const result = await blogsCollection.insertOne(newBlog);
-        res.send(result);
+        res.status(201).send(result);
       } catch (err) {
         res.status(500).send({ error: 'Failed to create blog post' });
       }
     });
-    //  Add to wishlist
+
+    app.patch('/allBlogs/:id', verifyToken, async (req, res) => {
+      try {
+        const blogId = req.params.id;
+        const userEmail = req.query.email;
+        const updatedBlog = req.body;
+        delete updatedBlog._id;
+        delete updatedBlog.createdAt;
+        delete updatedBlog.email;
+
+        if (!ObjectId.isValid(blogId)) {
+          return res.status(400).send({ error: 'Invalid blog ID' });
+        }
+        if (userEmail !== req.user.email) {
+          return res.status(403).send({ error: 'Unauthorized' });
+        }
+
+        const blog = await blogsCollection.findOne({
+          _id: new ObjectId(blogId),
+        });
+        if (!blog) return res.status(404).send({ error: 'Blog not found' });
+        if (blog.email !== userEmail) {
+          return res.status(403).send({ error: 'Unauthorized' });
+        }
+
+        const result = await blogsCollection.updateOne(
+          { _id: new ObjectId(blogId) },
+          { $set: updatedBlog }
+        );
+        res.send({ message: 'Blog updated successfully', result });
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to update blog' });
+      }
+    });
+
+    // Wishlist endpoints
     app.post('/wishList', verifyToken, async (req, res) => {
       try {
         const { blogId, userEmail } = req.body;
@@ -236,85 +228,68 @@ async function run() {
             .status(400)
             .send({ error: 'Blog ID or user email is required' });
         }
-        const exist = await wishListCollection.findOne({
-          blogId,
-          userEmail,
-        });
-        if (exist) {
-          return res.status(400).send({ error: 'Blog already in wishList' });
+        if (!ObjectId.isValid(blogId)) {
+          return res.status(400).send({ error: 'Invalid blog ID' });
         }
-        const wishListItem = {
+        const exist = await wishListCollection.findOne({ blogId, userEmail });
+        if (exist)
+          return res.status(400).send({ error: 'Already in wishlist' });
+
+        const result = await wishListCollection.insertOne({
           blogId: new ObjectId(blogId),
           userEmail,
           addedAt: new Date(),
-        };
-        const result = await wishListCollection.insertOne(wishListItem);
+        });
         res.status(201).send(result);
       } catch (err) {
-        res.status(500).send({ error: 'Failed to add to wishList' });
+        res.status(500).send({ error: 'Failed to add to wishlist' });
       }
     });
 
-    // Remove from wishlist
     app.delete('/wishList/:id', verifyToken, async (req, res) => {
-      const blogId = req.params.id;
-      const email = req.query.email;
-      if (email !== req.user.email) {
-        return res.status(403).send({ error: 'Unauthorized to remove from wishlist' });
-      }
       try {
+        const blogId = req.params.id;
+        const email = req.query.email;
+        if (!ObjectId.isValid(blogId)) {
+          return res.status(400).send({ error: 'Invalid blog ID' });
+        }
+        if (email !== req.user.email) {
+          return res.status(403).send({ error: 'Unauthorized' });
+        }
+
         const result = await wishListCollection.deleteOne({
           blogId: new ObjectId(blogId),
           userEmail: email,
         });
-        if (result.deletedCount === 0) {
-          return res.status(404).send({ error: 'Blog not found in wishList' });
+        if (!result.deletedCount) {
+          return res.status(404).send({ error: 'Not found in wishlist' });
         }
-        res
-          .status(200)
-          .send({ message: 'Blog removed from wishList successfully' });
+        res.send({ message: 'Removed successfully' });
       } catch (err) {
-        res.status(500).send({ error: 'Failed to remove from wishList' });
+        res.status(500).send({ error: 'Failed to remove from wishlist' });
       }
     });
-    //get all wishListed blogs for a user
+
     app.get('/wishList/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
-        console.log('Fetching wishlist for email:', email);
         if (email !== req.user.email) {
-          console.log('Unauthorized access attempt:', {
-            requestedEmail: email,
-            userEmail: req.user.email,
-          });
-          return res
-            .status(403)
-            .send({ error: 'Unauthorized to access wishlist' });
+          return res.status(403).send({ error: 'Unauthorized' });
         }
+
         const wishList = await wishListCollection
           .find({ userEmail: email })
           .toArray();
-        console.log('Wishlist items:', wishList);
-        if (wishList.length === 0) {
-          console.log('No wishlist items found for email:', email);
-          return res.status(200).send([]);
-        }
-        const blogIds = wishList.map(item => {
-          const blogId =
-            typeof item.blogId === 'string'
-              ? new ObjectId(item.blogId)
-              : item.blogId;
-          console.log('Processing blogId:', blogId); 
-          return blogId;
-        });
-        console.log('Blog IDs for aggregation:', blogIds);
+        if (wishList.length === 0) return res.status(200).send([]);
+        const blogIds = wishList.map(item =>
+          typeof item.blogId === 'string' && ObjectId.isValid(item.blogId)
+            ? new ObjectId(item.blogId)
+            : item.blogId
+        );
+
         const blogs = await blogsCollection
           .aggregate([
-            {
-              $match: {
-                _id: { $in: blogIds },
-              },
-            },
+            { $match: { _id: { $in: blogIds } } },
             {
               $addFields: {
                 wordCount: {
@@ -324,9 +299,7 @@ async function run() {
                 },
               },
             },
-            {
-              $sort: { createdAt: -1 },
-            },
+            { $sort: { createdAt: -1 } },
             {
               $project: {
                 _id: 1,
@@ -339,89 +312,100 @@ async function run() {
             },
           ])
           .toArray();
-        console.log('Aggregated blogs:', blogs); 
-        res.status(200).send(blogs);
+
+        res.send(blogs);
       } catch (err) {
-        console.error('Error fetching wishlist:', err);
         res.status(500).send({ error: 'Failed to fetch wishlist' });
       }
     });
-    //to get Star of the week
+
+    // Comments endpoints
+    app.get('/comments', async (req, res) => {
+      try {
+        const blogId = req.query.blogId;
+        if (!blogId) return res.status(400).send({ error: 'Blog ID required' });
+        if (!ObjectId.isValid(blogId))
+          return res.status(400).send({ error: 'Invalid blog ID' });
+        const result = await commentsCollection
+          .find({ blogId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to fetch comments' });
+      }
+    });
+
+    app.post('/comments', verifyToken, async (req, res) => {
+      try {
+        const { blogId, userEmail, text } = req.body;
+        if (!blogId || !userEmail || !text) {
+          return res.status(400).send({ error: 'All fields required' });
+        }
+        if (!ObjectId.isValid(blogId))
+          return res.status(400).send({ error: 'Invalid blog ID' });
+        const result = await commentsCollection.insertOne({
+          blogId,
+          userEmail,
+          text,
+          createdAt: new Date(),
+        });
+        res.status(201).send(result);
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to add comment' });
+      }
+    });
+
+    // Categories endpoint
+    app.get('/categories', async (req, res) => {
+      try {
+        const categories = await blogsCollection.distinct('category');
+        res.send(categories.sort());
+      } catch (err) {
+        res.status(500).send({ error: 'Failed to fetch categories' });
+      }
+    });
+
+    // Star of the week
     app.get('/api/starPerson', async (req, res) => {
       try {
         const result = await starCollection
           .aggregate([{ $sample: { size: 1 } }])
           .toArray();
-        res.send(result[0]);
+        res.send(result[0] || {});
       } catch (err) {
-        res.status(500).send({
-          error: 'failed to fetch the person',
-        });
+        res.status(500).send({ error: 'Failed to fetch star person' });
       }
     });
 
-    //update blog
-    app.patch('/allBlogs/:id', verifyToken, async (req, res) => {
-      try {
-        const blogId = req.params.id;
-        const userEmail = req.query.email;
-        const updatedBlog = req.body;
-
-        delete updatedBlog._id;
-        delete updatedBlog.createdAt;
-        delete updatedBlog.email;
-
-        if (userEmail !== req.user.email) {
-          return res.status(403).send({ error: 'You are not authorized to update this blog' });
-        }
-
-        const blog = await blogsCollection.findOne({
-          _id: new ObjectId(blogId),
-        });
-        if (!blog) {
-          return res.status(404).send({ error: 'Blog not found' });
-        }
-        if (blog.email !== userEmail) {
-          return res
-            .status(403)
-            .send({ error: 'You are not authorized to update this blog' });
-        }
-
-        const result = await blogsCollection.updateOne(
-          { _id: new ObjectId(blogId) },
-          { $set: updatedBlog }
-        );
-        if (result.matchedCount === 0) {
-          return res
-            .status(404)
-            .send({ error: 'Blog not found or no changes made' });
-        }
-        res.status(200).send({ message: 'Blog updated successfully', result });
-      } catch (err) {
-        res.status(500).send({ error: 'Failed to update blog' });
-      }
-    });
-
+    // Dashboard token check
     app.get('/api/dashboard', verifyToken, (req, res) => {
       res.send({ message: 'Token is valid', user: req.user });
     });
-    // Send a ping to confirm a successful connection
-    await client.db('admin').command({ ping: 1 });
-    console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!'
-    );
-  } finally {
-    // Ensures that the client will close when you finish/error
-    //await client.close();
+
+    // Health check
+    app.get('/health', (req, res) => {
+      res.send({ status: 'healthy' });
+    });
+  } catch (err) {
+    console.error('Server startup error:', err);
+    process.exit(1); // Exit if connection fails
   }
 }
-run().catch(console.dir);
+
+run().catch(console.error);
 
 app.get('/', (req, res) => {
   res.send('StackMind backend is running!');
 });
 
-
 app.listen(port, () => {
   console.log(`StackMind app is listening on port ${port}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('Shutting down...');
+  await client.close();
+  process.exit(0);
 });
