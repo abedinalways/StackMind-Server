@@ -92,6 +92,7 @@ async function run() {
       res.send({ message: 'Logged out successfully' });
     });
 
+    //
     //get recent blog
     app.get('/blogs', async (req, res) => {
       const cursor = blogsCollection.find().sort({ createdAt: -1 }).limit(6);
@@ -100,7 +101,7 @@ async function run() {
     });
 
     //get all blogs
-    app.get('/allBlogs', verifyToken, async (req, res) => {
+    app.get('/allBlogs',  async (req, res) => {
       try {
         const { category, search } = req.query;
         let query = {};
@@ -155,8 +156,9 @@ async function run() {
       }
     });
 
+
     //To get a single blog by its ID for the details page
-    app.get('/allBlogs/:id', verifyToken, async (req, res) => {
+    app.get('/allBlogs/:id', async (req, res) => {
       try {
         const blogId = req.params.id;
         const blog = await blogsCollection.findOne({
@@ -170,8 +172,9 @@ async function run() {
         res.status(500).send({ error: 'Failed to fetch blog details' });
       }
     });
+    
     //get comments for a blog Id
-    app.get('/comments', verifyToken, async (req, res) => {
+    app.get('/comments', async (req, res) => {
       try {
         const blogId = req.query.blogId;
         if (!blogId) {
