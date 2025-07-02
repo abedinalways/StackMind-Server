@@ -43,7 +43,7 @@ const verifyToken = (req, res, next) => {
 // Middleware
 app.use(
   cors({
-    origin: ['http://localhost:5173', 'https://stackmind-auth.web.app'],
+    origin: ['https://stackmind-auth.web.app'],
     credentials: true,
   })
 );
