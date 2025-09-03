@@ -40,6 +40,7 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+
 // Middleware
 app.use(
   cors({
