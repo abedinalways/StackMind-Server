@@ -3,7 +3,7 @@
 ## Project Overview
 - **Project Name**: StackMind Web Blog
 - **Purpose**: This is the backend server for the StackMind Web Blog platform, built with Node.js and Express. It provides RESTful APIs to manage blog posts, user authentication, comments, and wishlist functionality, integrated with MongoDB for data storage.
-- **Live URL**: https://stack-mind-server.vercel.app
+- **Live URL**: https://stackmind-server.onrender.com
 
 ## Key Features
 - User authentication using JWT tokens.
@@ -23,6 +23,6 @@
 
 ## Setup and Usage
 - Clone the repository, install dependencies with `npm install`, and configure environment variables (e.g., `DB_USER`, `DB_PASS`, `JWT_ACCESS_TOKEN`).
-- Run locally with `node index.js` or deploy to Vercel with `vercel --prod`.
+- Run locally with `node index.js` or deploy to Render.
 - Access APIs at the live URL or `http://localhost:3000` during development.
 
